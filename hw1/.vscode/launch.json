@@ -11,7 +11,7 @@
             "program": "${file}",
             "console": "integratedTerminal",
             "justMyCode": true,
-            "args": ["test-convolve"],
+            "args": ["non-maximum-suppression-edge-detection"],
             "purpose": ["debug-in-terminal"]
         }
     ]
