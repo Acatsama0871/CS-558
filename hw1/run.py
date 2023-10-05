@@ -4,7 +4,6 @@ import itertools
 import numpy as np
 from typing import Union, Tuple
 from PIL import Image
-from rich import print
 
 
 app = typer.Typer()
@@ -276,7 +275,7 @@ def gaussian_filter_func(
         os.path.join("result"), "--output", "-o", help="Output folder path"
     ),
     sigma: float = typer.Option(
-        1.0, "--sigma", "-s", help="Sigma (variance in gaussian filer)"
+        1.0, "--sigma", "-sig", help="Sigma (variance in gaussian filer)"
     ),
     size: Union[int, None] = typer.Option(
         None,
@@ -294,7 +293,7 @@ def gaussian_filter_func(
     save_image(
         os.path.join(
             output_folder_path,
-            f"gaussian_{input_image_path.split('/')[-1].split('.')[0]}_{sigma}_{size}.pgm",
+            f"gaussian_{input_image_path.split('/')[-1].split('.')[0]}_sigma={sigma}_filtered_size={size}.pgm",
         ),
         result,
     )
@@ -313,12 +312,24 @@ def sobel_operator_gradient_magnitude(
     output_folder_path: str = typer.Option(
         os.path.join("result"), "--output", "-o", help="Output folder path"
     ),
+    sigma: float = typer.Option(
+        6.0, "--sigma", "-sig", help="Sigma (variance in gaussian filer)"
+    ),
+    gaussian_filter_size: Union[int, None] = typer.Option(
+        None,
+        "--gaussian-size",
+        "-gs",
+        help="Size of the filter, should be at least less than image size"
+        ", if it is not specified, it will be set to floor(6 * sigma + 1))",
+    ),
     threshold: float = typer.Option(75.0, "--threshold", "-t", help="Threshold"),
 ):
     # load image
     image = load_image(input_image_path)
+    # gaussian filter
+    result, size = gaussian_filter(image=image, sigma=sigma, size=gaussian_filter_size)
     # convolve
-    result_x, result_y = sobel_operator(image=image)
+    result_x, result_y = sobel_operator(image=result)
     # calculate magnitude
     magnitude = np.sqrt(result_x**2 + result_y**2)
     magnitude_filter = magnitude > threshold
@@ -327,7 +338,7 @@ def sobel_operator_gradient_magnitude(
     save_image(
         os.path.join(
             output_folder_path,
-            f"sobel_magnitude_x_{threshold}_{input_image_path.split('/')[-1].replace('.pgm', '')}.pgm",
+            f"sobel_magnitude_{input_image_path.split('/')[-1].split('.')[0]}_sigma={sigma}_size={size}_threshold={threshold}.pgm",
         ),
         filtered_magnitude,
     )
@@ -346,7 +357,7 @@ def non_maximum_edge_detection_func(
         os.path.join("result"), "--output", "-o", help="Output folder path"
     ),
     sigma: float = typer.Option(
-        6., "--sigma", "-s", help="Sigma (variance in gaussian filer)"
+        6.0, "--sigma", "-sig", help="Sigma (variance in gaussian filer)"
     ),
     gaussian_filter_size: Union[int, None] = typer.Option(
         None,
@@ -369,41 +380,12 @@ def non_maximum_edge_detection_func(
     )
     edge_map = edge_map * 225
     img = Image.fromarray(edge_map)
-    img.save(os.path.join("result", f"edge_{input_image_path.split('/')[-1].split('.')[0]}_{sigma}_{size}_{threshold}.png"))
-
-
-@app.command(name="test-load", rich_help_panel="Test", help="Test load image")
-def test_load(
-    input_image_path: str = typer.Option(
-        os.path.join("data/kangaroo.pgm"), "--input", "-i", help="Input image path"
-    ),
-):
-    image = load_image(input_image_path)
-    print(image)
-    print(image.shape)
-
-
-@app.command(name="test-save", rich_help_panel="Test", help="Test save image")
-def test_save(
-    input_image_path: str = typer.Option(
-        os.path.join("data/kangaroo.pgm"), "--input", "-i", help="Input image path"
+    img.save(
+        os.path.join(
+            output_folder_path,
+            f"edge_{input_image_path.split('/')[-1].split('.')[0]}_sigma={sigma}_size={size}_threshold={threshold}.pgm",
+        )
     )
-):
-    image = load_image(input_image_path)
-    save_image("test.pgm", image)
-
-
-@app.command(name="test-convolve", rich_help_panel="Test", help="Test convolve")
-def test_convolve():
-    test_input = np.array(
-        [[1.0, 2, 3, 4], [5, 6, 7, 8], [9, 10, 11, 12], [13, 14, 15, 16]]
-    )
-    test_kernel = (1 / 9) * np.ones((3, 3))
-    result = convolve2d(test_input, test_kernel)
-    print()
-    print(test_input)
-    print()
-    print(result)
 
 
 if __name__ == "__main__":

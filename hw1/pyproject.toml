@@ -9,11 +9,6 @@ readme = "README.md"
 name = "PyPI"
 priority = "primary"
 
-[[tool.poetry.source]]
-name = "jorenham/jax_pep503"
-url = "https://jorenham.github.io/jax_pep503/"
-priority = "supplemental"
-
 [tool.poetry.dependencies]
 python = ">=3.10, < 3.11"
 numpy = "^1.26.0"
@@ -21,7 +16,6 @@ pillow = "^10.0.1"
 typer = "^0.9.0"
 rich = "^13.6.0"
 black = "^23.9.1"
-jax = {extras = ["cpu"], version = "^0.4.16"}
 ipykernel = "^6.25.2"
 
 
