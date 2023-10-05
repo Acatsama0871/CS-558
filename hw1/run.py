@@ -107,7 +107,6 @@ def _direction_zero(
     elif j >= (edge_map.shape[1] - 1):
         if filtered_intensity[i, j] >= filtered_intensity[i, j - 1]:
             edge_map[i, j] = filtered_intensity[i, j]
-            edge_map[i, j] = 1
             edge_map[i, j - 1] = 0
     # in the middle
     elif filtered_intensity[i, j] >= max(
@@ -137,8 +136,7 @@ def _direction_45(
         if i == 0:
             edge_map[i, j] = 0
         elif filtered_intensity[i, j] >= filtered_intensity[i - 1, j - 1]:
-            #edge_map[i, j] = filtered_intensity[i, j]
-            edge_map[i, j] = 1
+            edge_map[i, j] = filtered_intensity[i, j]
             edge_map[i - 1, j - 1] = 0
     elif i < 1:
         # 3.1 at the top left corner
