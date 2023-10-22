@@ -10,18 +10,18 @@ app = typer.Typer()
 
 
 # helper function
-def load_image(path: str) -> np.array:
+def load_image(path: str) -> np.ndarray:
     img = Image.open(path)
     img_gray = img.convert("L")
     return np.array(img_gray).astype(np.float64)
 
 
-def save_image(path: str, image: np.array):
+def save_image(path: str, image: np.ndarray):
     img = Image.fromarray(image)
     img.convert("L").save(path)
 
 
-def convolve2d(image: np.array, kernel: np.array) -> np.array:
+def convolve2d(image: np.ndarray, kernel: np.ndarray) -> np.ndarray:
     i_h = image.shape[0]
     i_w = image.shape[1]
     k_h = kernel.shape[0]
@@ -65,8 +65,8 @@ def gaussian_func(x: int, y: int, sigma: float, size: int) -> float:
 
 
 def gaussian_filter(
-    image: np.array, sigma: float, size: Union[int, None] = None
-) -> Tuple[np.array, int]:
+    image: np.ndarray, sigma: float, size: Union[int, None] = None
+) -> Tuple[np.ndarray, int]:
     # set size
     if size is None:
         size = int(np.floor(6 * sigma + 1))
@@ -80,7 +80,7 @@ def gaussian_filter(
 
 
 # sobel operator
-def sobel_operator(image: np.array) -> Tuple[np.array, np.array]:
+def sobel_operator(image: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
     # sobel operator
     sobel_x = np.array([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]])
     sobel_y = np.array([[-1, -2, -1], [0, 0, 0], [1, 2, 1]])
@@ -89,14 +89,14 @@ def sobel_operator(image: np.array) -> Tuple[np.array, np.array]:
 
 
 # non maximum suppression
-def map_to_closest_val(x: np.array, candidates: np.array) -> np.array:
+def map_to_closest_val(x: np.ndarray, candidates: np.ndarray) -> np.ndarray:
     dists = np.abs(x[:, np.newaxis] - candidates[:, np.newaxis])
     return candidates[np.argmin(dists, axis=1)]
 
 
 def _direction_zero(
-    filtered_intensity: np.array, edge_map: np.array, i: int, j: int
-) -> np.array:
+    filtered_intensity: np.ndarray, edge_map: np.ndarray, i: int, j: int
+) -> np.ndarray:
     # at the left edge
     if j < 1:
         if filtered_intensity[i, j] >= filtered_intensity[i, j + 1]:
@@ -119,8 +119,8 @@ def _direction_zero(
 
 
 def _direction_45(
-    filtered_intensity: np.array, edge_map: np.array, i: int, j: int
-) -> np.array:
+    filtered_intensity: np.ndarray, edge_map: np.ndarray, i: int, j: int
+) -> np.ndarray:
     # 1. at the left edge
     if j < 1:
         # 1.1 at the bottom left corner
@@ -165,8 +165,8 @@ def _direction_45(
 
 
 def _direction_90(
-    filtered_intensity: np.array, edge_map: np.array, i: int, j: int
-) -> np.array:
+    filtered_intensity: np.ndarray, edge_map: np.ndarray, i: int, j: int
+) -> np.ndarray:
     # 1. at the top edge
     if i < 1:
         if filtered_intensity[i, j] >= filtered_intensity[i + 1, j]:
@@ -186,8 +186,8 @@ def _direction_90(
 
 
 def _direction_135(
-    filtered_intensity: np.array, edge_map: np.array, i: int, j: int
-) -> np.array:
+    filtered_intensity: np.ndarray, edge_map: np.ndarray, i: int, j: int
+) -> np.ndarray:
     # 1. at the left edge
     if j < 1:
         # 1.1 at the top left corner
@@ -235,8 +235,8 @@ def _direction_135(
 
 
 def non_maximum_suppression_edge_detection(
-    sobel_x: np.array, sobel_y: np.array, threshold: float
-) -> np.array:
+    sobel_x: np.ndarray, sobel_y: np.ndarray, threshold: float
+) -> np.ndarray:
     # direction map
     direction_map = np.arctan2(sobel_y, sobel_x) * 180 / np.pi
     direction_map = np.where(direction_map < 0, direction_map + 180, direction_map)
