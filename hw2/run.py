@@ -102,11 +102,10 @@ def corner_keypoint_detector(
     if threshold is None:
         if threshold_quantile is None:
             raise ValueError("Either threshold or threshold quantile must be specified")
-    else:
-        if threshold_quantile is not None:
-            raise ValueError(
-                "Only one of threshold or threshold quantile can be specified"
-            )
+    elif threshold_quantile is not None:
+        raise ValueError(
+            "Only one of threshold or threshold quantile can be specified"
+        )
     # gaussian smoothing
     result, _ = gaussian_filter(image=image, sigma=sigma, size=gaussian_filter_size)
     # second order derivatives
@@ -129,10 +128,9 @@ def corner_keypoint_detector(
                 det_hessian[x - 1 : x + 2, y - 1 : y + 2]
             ):  # type: ignore
                 det_hessian[x, y] = 0
-            else:
-                if det_hessian[x, y] != 0:  # if all zeros, keep it
-                    det_hessian[x - 1 : x + 2, y - 1 : y + 2] = 0  # type: ignore
-                    det_hessian[x, y] = 1
+            elif det_hessian[x, y] != 0:  # if all zeros, keep it
+                det_hessian[x - 1 : x + 2, y - 1 : y + 2] = 0  # type: ignore
+                det_hessian[x, y] = 1
     # ignore border
     det_hessian[0, :] = 0
     det_hessian[-1, :] = 0
@@ -179,11 +177,10 @@ def corner_keypoint(
     if threshold is None:
         if threshold_quantile is None:
             raise ValueError("Either threshold or threshold quantile must be specified")
-    else:
-        if threshold_quantile is not None:
-            raise ValueError(
-                "Only one of threshold or threshold quantile can be specified"
-            )
+    elif threshold_quantile is not None:
+        raise ValueError(
+            "Only one of threshold or threshold quantile can be specified"
+        )
     # load image
     image = load_image(input_image_path)
     # detect corner keypoints
