@@ -4,8 +4,9 @@ import typer
 import warnings
 import itertools
 import numpy as np
+import matplotlib.pyplot as plt
 from rich import print
-from typing import Union, Tuple, List
+from typing import Union, Tuple
 from PIL import Image
 from numba import jit
 from tqdm.auto import tqdm
@@ -145,52 +146,63 @@ def corner_keypoint_detector(
 
 
 # ransac line fit
-def generate_sample_space(
-    num_samples: int, num_points_per_sample: int, keypoints: List[Tuple[int, int]]
-) -> List[Tuple[Tuple[int, int]]]:
-    # sample index
-    sampled_groups_index = [
-        tuple(
-            np.random.choice(len(keypoints), size=num_points_per_sample, replace=False)
-        )
-        for _ in range(num_samples)
-    ]
-    while len(set(sampled_groups_index)) != len(sampled_groups_index):
-        sampled_groups_index = [
-            tuple(
-                np.random.choice(
-                    len(keypoints), size=num_points_per_sample, replace=False
-                )
-            )
-            for _ in range(num_samples)
-        ]
-    # convert index to points
-    sampled_groups = []
-    for one_group in sampled_groups_index:
-        sampled_groups.append(tuple(keypoints[i] for i in one_group))
-    return sampled_groups
+def random_n_points_pair(points, n):
+    idx = np.random.choice(points.shape[0], n, replace=False)
+    return np.array(list(itertools.combinations(points[idx], 2)))
 
 
-@jit(nopython=True)
-def fit_line(points: List[Tuple[int, int]]) -> np.ndarray:
-    # assume the line is ax + by + c = 0
-    points = np.array(points, dtype=np.float64)  # type: ignore
-    points = np.hstack((points, np.ones((points.shape[0], 1))))  # type: ignore
-    eigen_values, eigen_vectors = np.linalg.eig(points.T @ points)  # type: ignore
+def fit_line(points):
+    m = np.vstack(points)
+    m = np.hstack([m, np.ones((m.shape[0], 1))])
+    eigen_values, eigen_vectors = np.linalg.eig(m.T @ m)
     index = np.argmin(eigen_values)
-    return eigen_vectors[:, index]
+    a, b, c = eigen_vectors[:, index]
+    norm = (a**2 + b**2) ** 0.5
+    a, b, c = a / norm, b / norm, c / norm
+    return a, b, c
 
 
-@jit(nopython=True)
-def distance_to_a_line(coefficients: np.ndarray, points: np.ndarray) -> np.ndarray:
-    points = np.hstack((points, np.ones((points.shape[0], 1))))  # type: ignore
-    return np.abs(np.sum(points * coefficients, axis=1)) / np.sqrt(
-        coefficients[0] ** 2 + coefficients[1] ** 2
+def distance_to_line(p, a, b, c):
+    x, y = p
+    return abs(a * x + b * y + c)
+
+
+def ransac_one_iter(all_points, num_point_pairs=1000, threshold=2):
+    point_pairs = random_n_points_pair(all_points, num_point_pairs)
+
+    # find the line with most inliers
+    best_inlier_count = 0
+    best_line_inliers = None
+    for cur_pair in tqdm(point_pairs):
+        a, b, c = fit_line([cur_pair[0], cur_pair[1]])
+        cur_inliers = [
+            p for p in all_points if distance_to_line(p, a, b, c) < threshold
+        ]
+        inlier_count = len(cur_inliers)
+        if inlier_count > best_inlier_count:
+            best_inlier_count = inlier_count
+            best_line_inliers = cur_inliers
+
+    # refit the line with all inliers
+    a, b, c = fit_line(best_line_inliers)
+    all_points = np.array(
+        [p for p in all_points if distance_to_line(p, a, b, c) >= threshold]
     )
+    return a, b, c, all_points, len(best_line_inliers), best_line_inliers
 
 
-def compute_y(x: int, a: float, b: float, c: float) -> int:
-    return int((-a * x - c) / b)
+def ransac(all_points, num_lines, num_point_pairs=300, threshold=2):
+    all_lines = []
+    for _ in range(num_lines):
+        a, b, c, all_points, num_inliers, inliers = ransac_one_iter(
+            all_points, num_point_pairs, threshold
+        )
+        all_lines.append([a, b, c, num_inliers, inliers])
+    return all_lines
+
+
+def get_y_from_x(x, a, b, c):
+    return -(a * x + c) / b
 
 
 # functionalities
@@ -206,7 +218,7 @@ def corner_keypoint(
         os.path.join("result"), "--output", "-o", help="Output folder path"
     ),
     sigma: float = typer.Option(
-        4.0, "--sigma", "-sig", help="Sigma (variance in gaussian filer)"
+        6.0, "--sigma", "-sig", help="Sigma (variance in gaussian filer)"
     ),
     gaussian_filter_size: Union[int, None] = typer.Option(
         None,
@@ -216,7 +228,7 @@ def corner_keypoint(
         ", if it is not specified, it will be set to floor(6 * sigma + 1))",
     ),
     threshold: Union[float, None] = typer.Option(
-        30.0,
+        16.0,
         "--threshold",
         "-t",
         help="Threshold for corner keypoints as float, either input a value or use quantile",
@@ -257,78 +269,42 @@ def ransac_fit_func(
         os.path.join("result"), "--output", "-o", help="Output folder path"
     ),
     num_lines: int = typer.Option(
-        10, "--num-lines", "-n", help="Number of lines to fit"
+        4, "--num-lines", "-n", help="Number of lines to fit"
     ),
-    num_iterations: int = typer.Option(
-        1000, "--num-iterations", "-it", help="Number of iterations per line fit"
-    ),
-    num_sample: int = typer.Option(
-        2, "--num-sample", "-s", help="Number of point samples per line fit"
-    ),
-    confidence_val: int = typer.Option(
+    num_point_samples: int = typer.Option(
         100,
-        "--confidence",
-        "-c",
-        help="Confidence the number of inliers to support the line",
+        "--num-point-samples",
+        "-ns",
+        help="Number of point samples. Their combination will be point pairs space",
     ),
-    threshold: int = typer.Option(
-        5, "--threshold", "-t", help="Threshold for inliers"
-    ),
-    max_couner: int = typer.Option(
-        200,
-        "--max-counter",
-        "-mc",
-        help="Max number of time to sample from all points",
+    threshold: float = typer.Option(
+        2.0, "--threshold", "-t", help="Threshold for inliers"
     ),
 ) -> None:
-    # load image
-    image = load_image(input_image_path)
-    # get all keypoints coordinates
-    keypoints = np.argwhere(image == 255.0).astype(np.float64)
-    keypoints = [tuple(keypoint) for keypoint in keypoints]
-    c_limit = image.shape[1] / 3
-    keypoints = [keypoint for keypoint in keypoints if keypoint[1] < (1.5 * c_limit)]
-    # run ransac
-    line_counter = 0
-    results = []
-    counter = 0
-    while (line_counter < num_lines) and (counter < max_couner):
-        # generate sample space
-        sampled_groups = generate_sample_space(
-            num_samples=num_iterations, num_points_per_sample=num_sample, keypoints=keypoints  # type: ignore
-        )
-        for cur_point_set in tqdm(sampled_groups):
-            # get remaining points
-            remaining_points = np.array(list(set(keypoints) - set(cur_point_set)))
-            # fit line
-            coefs = fit_line(points=cur_point_set)  # type: ignore
-            # get distance to the line
-            distances = distance_to_a_line(coefficients=coefs, points=remaining_points)
-            # check number of inliners
-            if np.sum(distances < threshold) >= confidence_val:
-                # if enough inliners, fit the line again with all inliners and record result
-                inliners = np.vstack(
-                    (remaining_points[distances < threshold], np.array(cur_point_set))
-                )
-                inliners = [tuple(i) for i in inliners]
-                print(len(inliners))
-                coefs = fit_line(points=inliners)  # type: ignore
-                results.append((coefs, inliners))
-                keypoints = list(set(keypoints) - set(inliners))
-                line_counter += 1
-                counter = 0
-                break
-        counter += 1
-    print(f"Found {len(results)} lines")
-    # plot results
-    for r in results:
-        coefs, points = r
-        a, b, c = coefs[0], coefs[1], coefs[2]
-        line_start = (0, compute_y(0, a, b, c))
-        line_end = (image.shape[1] - 1, compute_y(image.shape[1] - 1, a, b, c))
-        cv2.line(image, line_start, line_end, 255, 1)  # type: ignore
+    # load image and keypoints
+    image = cv2.imread(input_image_path, 0)
+    y, x = np.where(image > 0)
+    x, y = x.astype(np.float32), y.astype(np.float32)
 
-    cv2.imwrite(os.path.join(output_folder_path, "line.png"), image)
+    # ransac
+    all_points = np.stack([x, y], axis=1)
+    result = ransac(
+        all_points,
+        num_lines=num_lines,
+        num_point_pairs=num_point_samples,
+        threshold=threshold,
+    )
+    
+    # plot
+    plt.imshow(image, cmap="gray")
+    for cur_r in result:
+        a, b, c, _, inliers = cur_r
+        x, y = np.stack(inliers, axis=1)
+        line_x = np.arange(x.min(), x.max(), 0.1)
+        line_y = get_y_from_x(line_x, a, b, c)
+        plt.scatter(x, y, color="yellow")
+        plt.plot(line_x, line_y, color="blue", linewidth=2)
+    plt.savefig(os.path.join(output_folder_path, "ransac.png"))
 
 
 if __name__ == "__main__":
