@@ -1,14 +1,20 @@
 import os
 import cv2
 import typer
+import warnings
 import itertools
 import numpy as np
+import matplotlib.pyplot as plt
 from rich import print
 from typing import Union, Tuple
 from PIL import Image
+from numba import jit
+from tqdm.auto import tqdm
 
 
 app = typer.Typer()
+np.random.seed(42)
+warnings.filterwarnings("ignore")
 
 
 # helper function
@@ -58,6 +64,7 @@ def convolve2d(image: np.ndarray, kernel: np.ndarray) -> np.ndarray:
 
 
 # gaussian filter
+@jit(nopython=True)
 def gaussian_func(x: int, y: int, sigma: float, size: int) -> float:
     return (
         1
@@ -102,11 +109,8 @@ def corner_keypoint_detector(
     if threshold is None:
         if threshold_quantile is None:
             raise ValueError("Either threshold or threshold quantile must be specified")
-    else:
-        if threshold_quantile is not None:
-            raise ValueError(
-                "Only one of threshold or threshold quantile can be specified"
-            )
+    elif threshold_quantile is not None:
+        raise ValueError("Only one of threshold or threshold quantile can be specified")
     # gaussian smoothing
     result, _ = gaussian_filter(image=image, sigma=sigma, size=gaussian_filter_size)
     # second order derivatives
@@ -129,10 +133,9 @@ def corner_keypoint_detector(
                 det_hessian[x - 1 : x + 2, y - 1 : y + 2]
             ):  # type: ignore
                 det_hessian[x, y] = 0
-            else:
-                if det_hessian[x, y] != 0:  # if all zeros, keep it
-                    det_hessian[x - 1 : x + 2, y - 1 : y + 2] = 0  # type: ignore
-                    det_hessian[x, y] = 1
+            elif det_hessian[x, y] != 0:  # if all zeros, keep it
+                det_hessian[x - 1 : x + 2, y - 1 : y + 2] = 0  # type: ignore
+                det_hessian[x, y] = 1
     # ignore border
     det_hessian[0, :] = 0
     det_hessian[-1, :] = 0
@@ -140,6 +143,66 @@ def corner_keypoint_detector(
     det_hessian[:, -1] = 0
 
     return (det_hessian * 255).astype(np.uint8)
+
+
+# ransac line fit
+def random_n_points_pair(points, n):
+    idx = np.random.choice(points.shape[0], n, replace=False)
+    return np.array(list(itertools.combinations(points[idx], 2)))
+
+
+def fit_line(points):
+    m = np.vstack(points)
+    m = np.hstack([m, np.ones((m.shape[0], 1))])
+    eigen_values, eigen_vectors = np.linalg.eig(m.T @ m)
+    index = np.argmin(eigen_values)
+    a, b, c = eigen_vectors[:, index]
+    norm = (a**2 + b**2) ** 0.5
+    a, b, c = a / norm, b / norm, c / norm
+    return a, b, c
+
+
+def distance_to_line(p, a, b, c):
+    x, y = p
+    return abs(a * x + b * y + c)
+
+
+def ransac_one_iter(all_points, num_point_pairs=1000, threshold=2):
+    point_pairs = random_n_points_pair(all_points, num_point_pairs)
+
+    # find the line with most inliers
+    best_inlier_count = 0
+    best_line_inliers = None
+    for cur_pair in tqdm(point_pairs):
+        a, b, c = fit_line([cur_pair[0], cur_pair[1]])
+        cur_inliers = [
+            p for p in all_points if distance_to_line(p, a, b, c) < threshold
+        ]
+        inlier_count = len(cur_inliers)
+        if inlier_count > best_inlier_count:
+            best_inlier_count = inlier_count
+            best_line_inliers = cur_inliers
+
+    # refit the line with all inliers
+    a, b, c = fit_line(best_line_inliers)
+    all_points = np.array(
+        [p for p in all_points if distance_to_line(p, a, b, c) >= threshold]
+    )
+    return a, b, c, all_points, len(best_line_inliers), best_line_inliers
+
+
+def ransac(all_points, num_lines, num_point_pairs=300, threshold=2):
+    all_lines = []
+    for _ in range(num_lines):
+        a, b, c, all_points, num_inliers, inliers = ransac_one_iter(
+            all_points, num_point_pairs, threshold
+        )
+        all_lines.append([a, b, c, num_inliers, inliers])
+    return all_lines
+
+
+def get_y_from_x(x, a, b, c):
+    return -(a * x + c) / b
 
 
 # functionalities
@@ -155,7 +218,7 @@ def corner_keypoint(
         os.path.join("result"), "--output", "-o", help="Output folder path"
     ),
     sigma: float = typer.Option(
-        2.0, "--sigma", "-sig", help="Sigma (variance in gaussian filer)"
+        6.0, "--sigma", "-sig", help="Sigma (variance in gaussian filer)"
     ),
     gaussian_filter_size: Union[int, None] = typer.Option(
         None,
@@ -165,7 +228,7 @@ def corner_keypoint(
         ", if it is not specified, it will be set to floor(6 * sigma + 1))",
     ),
     threshold: Union[float, None] = typer.Option(
-        25.0,
+        16.0,
         "--threshold",
         "-t",
         help="Threshold for corner keypoints as float, either input a value or use quantile",
@@ -173,17 +236,13 @@ def corner_keypoint(
     threshold_quantile: Union[float, None] = typer.Option(
         None, help="Threshold quantile"
     ),
-    cross_size: int = typer.Option(2, help="Size of the cross"),
 ):
     # param check
     if threshold is None:
         if threshold_quantile is None:
             raise ValueError("Either threshold or threshold quantile must be specified")
-    else:
-        if threshold_quantile is not None:
-            raise ValueError(
-                "Only one of threshold or threshold quantile can be specified"
-            )
+    elif threshold_quantile is not None:
+        raise ValueError("Only one of threshold or threshold quantile can be specified")
     # load image
     image = load_image(input_image_path)
     # detect corner keypoints
@@ -194,10 +253,71 @@ def corner_keypoint(
         threshold=threshold,
         threshold_quantile=threshold_quantile,
     )
-    # plot result
-    y_coords, x_coords = np.where(result > 0)
     # save result
     cv2.imwrite(os.path.join(output_folder_path, "keypoint.png"), result)
+
+
+@app.command("ransac-linefit", help="Detect lines in an image using RANSAC")
+def ransac_fit_func(
+    input_image_path: str = typer.Option(
+        os.path.join("result/keypoint.png"),
+        "--input",
+        "-i",
+        help="Input keypoint image path",
+    ),
+    output_folder_path: str = typer.Option(
+        os.path.join("result"), "--output", "-o", help="Output folder path"
+    ),
+    num_lines: int = typer.Option(
+        4, "--num-lines", "-n", help="Number of lines to fit"
+    ),
+    num_point_samples: int = typer.Option(
+        100,
+        "--num-point-samples",
+        "-ns",
+        help="Number of point samples. Their combination will be point pairs space",
+    ),
+    threshold: float = typer.Option(
+        2.0, "--threshold", "-t", help="Threshold for inliers"
+    ),
+) -> None:
+    # load image and keypoints
+    image = cv2.imread(input_image_path, 0)
+    y, x = np.where(image > 0)
+    x, y = x.astype(np.float32), y.astype(np.float32)
+
+    # ransac
+    all_points = np.stack([x, y], axis=1)
+    result = ransac(
+        all_points,
+        num_lines=num_lines,
+        num_point_pairs=num_point_samples,
+        threshold=threshold,
+    )
+
+    # plot
+    image = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
+    for cur_r in result:
+        a, b, c, num_support, inliers = cur_r
+        x, y = np.stack(inliers, axis=1)
+        for point in inliers:
+            pt1 = (int(point[0]) - 1, int(point[1]) - 1)
+            pt2 = (int(point[0]) + 1, int(point[1]) + 1)
+            cv2.rectangle(image, pt1, pt2, (0, 255, 255), -1)
+        x0, y0 = int(x.min()), int((-a * x.min() - c) / b)
+        x1, y1 = int(x.max()), int((-a * x.max() - c) / b)
+        cv2.line(image, (x0, y0), (x1, y1), (255, 0, 0), thickness=2)
+        text_pos = (x0 + 20, y0 + 10)
+        cv2.putText(
+            image,
+            f"{num_support}",
+            text_pos,
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.6,
+            (0, 0, 255),
+            1,
+        )
+    cv2.imwrite(os.path.join(output_folder_path, "ransac.png"), image)
 
 
 if __name__ == "__main__":
