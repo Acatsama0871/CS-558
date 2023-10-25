@@ -294,17 +294,30 @@ def ransac_fit_func(
         num_point_pairs=num_point_samples,
         threshold=threshold,
     )
-    
+
     # plot
-    plt.imshow(image, cmap="gray")
+    image = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
     for cur_r in result:
-        a, b, c, _, inliers = cur_r
+        a, b, c, num_support, inliers = cur_r
         x, y = np.stack(inliers, axis=1)
-        line_x = np.arange(x.min(), x.max(), 0.1)
-        line_y = get_y_from_x(line_x, a, b, c)
-        plt.scatter(x, y, color="yellow")
-        plt.plot(line_x, line_y, color="blue", linewidth=2)
-    plt.savefig(os.path.join(output_folder_path, "ransac.png"))
+        for point in inliers:
+            pt1 = (int(point[0]) - 1, int(point[1]) - 1)
+            pt2 = (int(point[0]) + 1, int(point[1]) + 1)
+            cv2.rectangle(image, pt1, pt2, (0, 255, 255), -1)
+        x0, y0 = int(x.min()), int((-a * x.min() - c) / b)
+        x1, y1 = int(x.max()), int((-a * x.max() - c) / b)
+        cv2.line(image, (x0, y0), (x1, y1), (255, 0, 0), thickness=2)
+        text_pos = (x0 + 20, y0 + 10)
+        cv2.putText(
+            image,
+            f"{num_support}",
+            text_pos,
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.6,
+            (0, 0, 255),
+            1,
+        )
+    cv2.imwrite(os.path.join(output_folder_path, "ransac.png"), image)
 
 
 if __name__ == "__main__":
