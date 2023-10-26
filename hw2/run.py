@@ -233,10 +233,8 @@ def hough_transform_iter(
     y, x = keypoints
     for i in range(len(x)):
         for j in range(len(thetas)):
-            rho = (
-                int(round(x[i] * np.cos(thetas[j]) + y[i] * np.sin(thetas[j])))
-                + diag_dist
-            )
+            rho = x[i] * np.cos(thetas[j]) + y[i] * np.sin(thetas[j])
+            rho = int(round(((rho + diag_dist) // rho_step)))
             accumulator[rho, j] += 1
 
     # find the most salient line
