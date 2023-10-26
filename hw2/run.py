@@ -6,7 +6,7 @@ import itertools
 import numpy as np
 import matplotlib.pyplot as plt
 from rich import print
-from typing import Union, Tuple
+from typing import Union, Tuple, List
 from PIL import Image
 from numba import jit
 from tqdm.auto import tqdm
@@ -146,12 +146,12 @@ def corner_keypoint_detector(
 
 
 # ransac line fit
-def random_n_points_pair(points, n):
+def random_n_points_pair(points: np.ndarray, n: int) -> np.ndarray:
     idx = np.random.choice(points.shape[0], n, replace=False)
     return np.array(list(itertools.combinations(points[idx], 2)))
 
 
-def fit_line(points):
+def fit_line(points: List[np.ndarray]) -> Tuple[float, float, float]:
     m = np.vstack(points)
     m = np.hstack([m, np.ones((m.shape[0], 1))])
     eigen_values, eigen_vectors = np.linalg.eig(m.T @ m)
@@ -162,12 +162,14 @@ def fit_line(points):
     return a, b, c
 
 
-def distance_to_line(p, a, b, c):
+def distance_to_line(p: np.ndarray, a: float, b: float, c: float):
     x, y = p
     return abs(a * x + b * y + c)
 
 
-def ransac_one_iter(all_points, num_point_pairs=1000, threshold=2):
+def ransac_one_iter(
+    all_points: np.ndarray, num_point_pairs: int = 1000, threshold: float = 2
+):
     point_pairs = random_n_points_pair(all_points, num_point_pairs)
 
     # find the line with most inliers
@@ -184,14 +186,19 @@ def ransac_one_iter(all_points, num_point_pairs=1000, threshold=2):
             best_line_inliers = cur_inliers
 
     # refit the line with all inliers
-    a, b, c = fit_line(best_line_inliers)
+    a, b, c = fit_line(best_line_inliers)  # type: ignore
     all_points = np.array(
         [p for p in all_points if distance_to_line(p, a, b, c) >= threshold]
     )
-    return a, b, c, all_points, len(best_line_inliers), best_line_inliers
+    return a, b, c, all_points, len(best_line_inliers), best_line_inliers  # type: ignore
 
 
-def ransac(all_points, num_lines, num_point_pairs=300, threshold=2):
+def ransac(
+    all_points: np.ndarray,
+    num_lines: int,
+    num_point_pairs: int = 300,
+    threshold: float = 2,
+):
     all_lines = []
     for _ in range(num_lines):
         a, b, c, all_points, num_inliers, inliers = ransac_one_iter(
@@ -201,7 +208,9 @@ def ransac(all_points, num_lines, num_point_pairs=300, threshold=2):
     return all_lines
 
 
-def get_y_from_x(x, a, b, c):
+def get_y_from_x(
+    x: Union[float, np.ndarray], a: float, b: float, c: float
+) -> Union[float, np.ndarray]:
     return -(a * x + c) / b
 
 
@@ -282,9 +291,11 @@ def ransac_fit_func(
     ),
 ) -> None:
     # load image and keypoints
-    image = cv2.imread(input_image_path, 0)
+    image: np.ndarray = cv2.imread(input_image_path, 0)
     y, x = np.where(image > 0)
-    x, y = x.astype(np.float32), y.astype(np.float32)
+    x, y = x.astype(np.float32), y.astype(
+        np.float32
+    )  # make sure we are in standard Cartesian coordinates
 
     # ransac
     all_points = np.stack([x, y], axis=1)
