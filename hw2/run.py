@@ -4,17 +4,17 @@ import typer
 import warnings
 import itertools
 import numpy as np
-import matplotlib.pyplot as plt
-from rich import print
-from typing import Union, Tuple
+from typing import Union, Tuple, List
 from PIL import Image
 from numba import jit
 from tqdm.auto import tqdm
+from rich.console import Console
 
 
 app = typer.Typer()
 np.random.seed(42)
 warnings.filterwarnings("ignore")
+console = Console()
 
 
 # helper function
@@ -146,12 +146,12 @@ def corner_keypoint_detector(
 
 
 # ransac line fit
-def random_n_points_pair(points, n):
+def random_n_points_pair(points: np.ndarray, n: int) -> np.ndarray:
     idx = np.random.choice(points.shape[0], n, replace=False)
     return np.array(list(itertools.combinations(points[idx], 2)))
 
 
-def fit_line(points):
+def fit_line(points: List[np.ndarray]) -> Tuple[float, float, float]:
     m = np.vstack(points)
     m = np.hstack([m, np.ones((m.shape[0], 1))])
     eigen_values, eigen_vectors = np.linalg.eig(m.T @ m)
@@ -162,12 +162,14 @@ def fit_line(points):
     return a, b, c
 
 
-def distance_to_line(p, a, b, c):
+def distance_to_line(p: np.ndarray, a: float, b: float, c: float):
     x, y = p
     return abs(a * x + b * y + c)
 
 
-def ransac_one_iter(all_points, num_point_pairs=1000, threshold=2):
+def ransac_one_iter(
+    all_points: np.ndarray, num_point_pairs: int = 1000, threshold: float = 2
+):
     point_pairs = random_n_points_pair(all_points, num_point_pairs)
 
     # find the line with most inliers
@@ -184,14 +186,19 @@ def ransac_one_iter(all_points, num_point_pairs=1000, threshold=2):
             best_line_inliers = cur_inliers
 
     # refit the line with all inliers
-    a, b, c = fit_line(best_line_inliers)
+    a, b, c = fit_line(best_line_inliers)  # type: ignore
     all_points = np.array(
         [p for p in all_points if distance_to_line(p, a, b, c) >= threshold]
     )
-    return a, b, c, all_points, len(best_line_inliers), best_line_inliers
+    return a, b, c, all_points, len(best_line_inliers), best_line_inliers  # type: ignore
 
 
-def ransac(all_points, num_lines, num_point_pairs=300, threshold=2):
+def ransac(
+    all_points: np.ndarray,
+    num_lines: int,
+    num_point_pairs: int = 300,
+    threshold: float = 2,
+):
     all_lines = []
     for _ in range(num_lines):
         a, b, c, all_points, num_inliers, inliers = ransac_one_iter(
@@ -201,8 +208,88 @@ def ransac(all_points, num_lines, num_point_pairs=300, threshold=2):
     return all_lines
 
 
-def get_y_from_x(x, a, b, c):
+def get_y_from_x(
+    x: Union[float, np.ndarray], a: float, b: float, c: float
+) -> Union[float, np.ndarray]:
     return -(a * x + c) / b
+
+
+# hough transform
+def hough_transform_iter(
+    keypoints: Tuple[np.ndarray, np.ndarray],
+    img_height: int,
+    img_width: int,
+    theta_step: float = 1.0,
+    rho_step: float = 1.0,
+    min_dist: float = 2.0,
+):
+    # create the accumulator
+    diag_dist = np.ceil(np.sqrt(img_height**2 + img_width**2)).astype(int)
+    thetas = np.deg2rad(np.arange(-90, 90, step=theta_step))
+    rhos = np.arange(-diag_dist, diag_dist, step=rho_step)
+    accumulator = np.zeros((2 * diag_dist, len(thetas)), dtype=np.int64)
+
+    # vote
+    y, x = keypoints
+    for i in range(len(x)):
+        for j in range(len(thetas)):
+            rho = x[i] * np.cos(thetas[j]) + y[i] * np.sin(thetas[j])
+            rho = int(round(((rho + diag_dist) // rho_step)))
+            accumulator[rho, j] += 1
+
+    # find the most salient line
+    rho_index, theta_index = np.unravel_index(np.argmax(accumulator), accumulator.shape)
+    rho = rhos[rho_index]
+    theta = thetas[theta_index]
+    if rho < 0:
+        rho = -rho
+        theta = theta + np.pi
+
+    # find the point with in the min_dist
+    all_points = np.hstack((y.reshape(-1, 1), x.reshape(-1, 1)))
+    dists = np.abs(
+        all_points[:, 0] * np.sin(theta) + all_points[:, 1] * np.cos(theta) - rho
+    )
+    to_remove_index = np.where(dists < min_dist)[0]
+    new_y = np.delete(y, to_remove_index)
+    new_x = np.delete(x, to_remove_index)
+    new_keypoints = (new_y, new_x)
+    inliers = (y[to_remove_index], x[to_remove_index])
+
+    return (rho, theta), new_keypoints, accumulator, inliers
+
+
+def hough_transform_line_detection(
+    keypoint_image: np.ndarray,
+    theta_step: float = 1.0,
+    rho_step: float = 1.0,
+    min_dist: float = 10.0,
+    num_lines: int = 4,
+):
+    keypoints = np.nonzero(keypoint_image)
+
+    lines = []
+    inliers = []
+    accumulators = []
+
+    for _ in range(num_lines):
+        cur_line, keypoints, cur_accumulator, cur_inliers = hough_transform_iter(
+            keypoints=keypoints,  # type: ignore
+            img_height=keypoint_image.shape[0],
+            img_width=keypoint_image.shape[1],
+            theta_step=theta_step,
+            rho_step=rho_step,
+            min_dist=min_dist,
+        )
+        lines.append(cur_line)
+        accumulators.append(cur_accumulator)
+        inliers.append(cur_inliers)
+
+        if len(keypoints[0]) == 0:
+            console.print("[red] No more keypoints to find [/red]")
+            break
+
+    return lines, accumulators, inliers
 
 
 # functionalities
@@ -282,9 +369,11 @@ def ransac_fit_func(
     ),
 ) -> None:
     # load image and keypoints
-    image = cv2.imread(input_image_path, 0)
+    image: np.ndarray = cv2.imread(input_image_path, 0)
     y, x = np.where(image > 0)
-    x, y = x.astype(np.float32), y.astype(np.float32)
+    x, y = x.astype(np.float32), y.astype(
+        np.float32
+    )  # make sure we are in standard Cartesian coordinates
 
     # ransac
     all_points = np.stack([x, y], axis=1)
@@ -318,6 +407,70 @@ def ransac_fit_func(
             1,
         )
     cv2.imwrite(os.path.join(output_folder_path, "ransac.png"), image)
+
+
+@app.command("hough-transform", help="Detect lines in an image using Hough Transform")
+def hough_line_fit(
+    input_image_path: str = typer.Option(
+        os.path.join("result/keypoint.png"),
+        "--input",
+        "-i",
+        help="Input keypoint image path",
+    ),
+    output_folder_path: str = typer.Option(
+        os.path.join("result"), "--output", "-o", help="Output folder path"
+    ),
+    num_lines: int = typer.Option(
+        4, "--num-lines", "-n", help="Number of lines to fit"
+    ),
+    theta_step: float = typer.Option(
+        2.0, "--theta-step", "-ts", help="Theta step size"
+    ),
+    rho_step: float = typer.Option(2.0, "--rho-step", "-rs", help="Rho step size"),
+    min_dist: float = typer.Option(
+        10.0,
+        "--min-dist",
+        "-md",
+        help="Distance to determine which points are inliers after line fitting",
+    ),
+) -> None:
+    # load keypoint image
+    image = cv2.imread(input_image_path, 0)
+
+    # hough transform
+    detected_lines, accumulators, inliers = hough_transform_line_detection(
+        keypoint_image=image,
+        theta_step=theta_step,
+        rho_step=rho_step,
+        min_dist=min_dist,
+        num_lines=num_lines,
+    )
+
+    # plot results
+    image = cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)
+    for cur_index, cur_result in enumerate(zip(detected_lines, accumulators, inliers)):
+        cur_line, cur_accumulator, cur_inlier = cur_result
+        y, x = cur_inlier
+        # plot line
+        a, b, c = np.cos(cur_line[1]), np.sin(cur_line[1]), -cur_line[0]
+        x0, y0 = int(x.min()), int((-a * x.min() - c) / b)
+        x1, y1 = int(x.max()), int((-a * x.max() - c) / b)
+        cv2.line(image, (x0, y0), (x1, y1), (255, 0, 0), thickness=1)
+        # plot accumulator
+        scaled_accumulator = np.uint8(255 * cur_accumulator / np.max(cur_accumulator))
+        cv2.imwrite(
+            os.path.join(
+                output_folder_path,
+                f"hough_accumulator_theta_step_{theta_step}_rho_step_{rho_step}_line_{cur_index}.png",
+            ),
+            scaled_accumulator,  # type: ignore
+        )  # type: ignore
+    cv2.imwrite(
+        os.path.join(
+            output_folder_path, f"hough_theta_step_{theta_step}_rho_step_{rho_step}.png"
+        ),
+        image,
+    )
 
 
 if __name__ == "__main__":
