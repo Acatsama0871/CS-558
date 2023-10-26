@@ -2,6 +2,9 @@ import cv2
 import numpy as np
 from rich import print
 from typing import Tuple
+from rich.console import Console
+
+console = Console()
 
 
 def create_test_image_with_points():
@@ -55,13 +58,13 @@ def hough_transform_iter(
     new_keypoints = (new_y, new_x)
     inliers = (y[to_remove_index], x[to_remove_index])
 
-    return (rho, theta), new_keypoints, inliers
+    return (rho, theta), new_keypoints, accumulator, inliers
 
 
 def hough_transform_line_detection(
     keypoint_image: np.ndarray,
-    theta_step: float = 1.0,
-    rho_step: float = 1.0,
+    theta_step: float = 1.0,  # very sensitive to this parameter
+    rho_step: float = 1.0,  # very sensitive to this parameter
     min_dist: float = 10.0,
     num_lines: int = 4,
 ):
@@ -69,9 +72,10 @@ def hough_transform_line_detection(
 
     lines = []
     inliers = []
+    accumulators = []
 
     for _ in range(num_lines):
-        cur_line, keypoints, cur_inlier = hough_transform_iter(
+        cur_line, keypoints, cur_accumulator, cur_inliers = hough_transform_iter(
             keypoints=keypoints,  # type: ignore
             img_height=keypoint_image.shape[0],
             img_width=keypoint_image.shape[1],
@@ -80,23 +84,42 @@ def hough_transform_line_detection(
             min_dist=min_dist,
         )
         lines.append(cur_line)
-        inliers.append(cur_inlier)
+        accumulators.append(cur_accumulator)
+        inliers.append(cur_inliers)
 
         if len(keypoints[0]) == 0:
-            print("No more keypoints to find")
+            console.print("[red] No more keypoints to find [/red]")
             break
-    return lines, inliers
+    return lines, accumulators, inliers
 
 
 if __name__ == "__main__":
-    test_image = create_test_image_with_points()
-    cv2.imwrite("test_image.png", test_image)
+    # test_image = create_test_image_with_points()
+    # cv2.imwrite("test_image.png", test_image)
+    image = cv2.imread("/home/haohang/CS-558/hw2/result/keypoint.png", 0)
 
-    detected_lines, inliers = hough_transform_line_detection(test_image)
-    print(detected_lines)
+    detected_lines, accumulators, inliers = hough_transform_line_detection(image)
 
     print("Expected line: rho = 50, theta = 90 degrees")
     for l in detected_lines:
         print(
             f"Detected line: rho = {l[0]:.2f}, theta = {np.rad2deg(l[1]) % 360:.2f} degrees"
         )
+
+    # plot
+    image = cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)
+    for cur_index, cur_result in enumerate(zip(detected_lines, accumulators, inliers)):
+        cur_line, cur_accumulator, cur_inlier = cur_result
+        y, x = cur_inlier
+        # plot line
+        a, b, c = np.cos(cur_line[1]), np.sin(cur_line[1]), -cur_line[0]
+        x0, y0 = int(x.min()), int((-a * x.min() - c) / b)
+        x1, y1 = int(x.max()), int((-a * x.max() - c) / b)
+        cv2.line(image, (x0, y0), (x1, y1), (255, 0, 0), thickness=1)
+        # plot accumulator
+        scaled_accumulator = np.uint8(255 * cur_accumulator / np.max(cur_accumulator))
+        cv2.imwrite(
+            f"/home/haohang/CS-558/hw2/result/accumulator_line_{cur_index}.png",
+            scaled_accumulator,  # type: ignore
+        )  # type: ignore
+    cv2.imwrite("/home/haohang/CS-558/hw2/result/detected_line.png", image)
