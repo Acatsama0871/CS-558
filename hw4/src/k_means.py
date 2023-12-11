@@ -2,55 +2,16 @@ import jax
 import jax.numpy as jnp
 from typing import Tuple
 from tqdm.auto import tqdm
+from .scatter_mean import scatter_mean_func
 
 
 # find cluster function
 @jax.jit
 def find_cluster(x: jnp.ndarray, centroids: jnp.ndarray) -> jnp.ndarray:
-    """
-    Finds the closest cluster for each data point
-
-    Args:
-        x (jnp.ndarray): data points(num_points x 1 x feature_dim)
-        centroids (jnp.ndarray): centroids (1 x num_clusters x feature_dim)
-
-    Returns:
-        jnp.ndarray: cluster assignments(num_points, ) (an array of integers that indicate the cluster index for each data point)
-    """
     dist = jnp.linalg.norm(
         x - centroids, axis=2
-    )  # (num_cluster x feature_dim) by default this is Frobenius norm
+    )  # (num_points, num_features) by default this is Frobenius norm
     return jnp.argmin(dist, axis=1)
-
-
-# scatter mean
-@jax.jit
-def scatter_add(sums, src, index):
-    return sums.at[index].add(src)
-
-
-@jax.jit
-def scatter_count(counts, index):
-    return counts.at[index].add(1)
-
-
-def scatter_mean(src, index, num_classes):
-    # Initialize arrays to store sums and counts
-    sums = jnp.zeros((num_classes, src.shape[1]))
-    counts = jnp.zeros(num_classes)
-
-    # Accumulate sums and counts using JIT-compiled functions
-    sums = scatter_add(sums, src, index)
-    counts = scatter_count(counts, index)
-
-    # Avoid division by zero
-    counts = jnp.where(counts == 0, 1, counts)
-    counts = counts[:, jnp.newaxis]  # type: ignore
-
-    return sums / counts
-
-
-scatter_mean = jax.jit(scatter_mean, static_argnums=(2,))
 
 
 # knn fit
@@ -84,7 +45,7 @@ def kmeans_fit(
 
             # update centroids
             prev_centroids = centroids
-            centroids = scatter_mean(
+            centroids = scatter_mean_func(
                 src=x, index=centroid_assignments, num_classes=num_clusters
             )
 
