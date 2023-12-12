@@ -3,8 +3,7 @@ import cv2
 import typer
 import numpy as np
 import jax.numpy as jnp
-from rich import print
-from src import kmeans_fit, slic_algo
+from src import kmeans_fit, slic_algo, sky_classification
 
 
 app = typer.Typer()
@@ -31,7 +30,7 @@ def k_means_segmentation_func(
         10, "-n", "-num-clusters", help="Number of clusters for k-means"
     ),
     random_seed: int = typer.Option(
-        0, "-r", "-random-seed", help="Random seed for k-means"
+        66, "-r", "-random-seed", help="Random seed for k-means"
     ),
     tol: float = typer.Option(
         1e-15, "-t", "-tol", help="Tolerance for k-means convergence"
@@ -137,6 +136,104 @@ def slic_func(
         ),
         cv2.cvtColor(image_array.astype("uint8"), cv2.COLOR_RGB2BGR),
     )
+
+
+@app.command(
+    "sky-classification",
+    help="Perform sky classification on an image",
+)
+def sky_classification_func(
+    train_image_path: str = typer.Option(
+        os.path.join("data", "sky", "train_sky.jpg"),
+        "-t",
+        "-train-image-path",
+        help="Path to train image",
+    ),
+    train_masked_image_path: str = typer.Option(
+        os.path.join("data", "sky", "train_sky_masked.jpg"),
+        "-tm",
+        "-train-masked-image-path",
+        help="Path to train masked image",
+    ),
+    test_image_root_path: str = typer.Option(
+        os.path.join("data", "sky"),
+        "-e",
+        "-test-image-path",
+        help="Path to test image",
+    ),
+    image_output_path: str = typer.Option(
+        os.path.join("result", "sky_output"),
+        "-o",
+        "-image-output-path",
+        help="Path to output image",
+    ),
+    num_clusters: int = typer.Option(
+        10, "-n", "-num-clusters", help="Number of clusters for k-means"
+    ),
+    random_seed: int = typer.Option(
+        66, "-r", "-random-seed", help="Random seed for k-means"
+    ),
+    tol: float = typer.Option(
+        1e-15, "-t", "-tol", help="Tolerance for k-means convergence"
+    ),
+    max_iter: int = typer.Option(
+        2000, "-m", "-max-iter", help="Maximum number of iterations for k-means"
+    ),
+    mask_color_r: int = typer.Option(
+        205, "-mr", "-mask-color-r", help="Mask color R value"
+    ),
+    mask_color_g: int = typer.Option(
+        69, "-mg", "-mask-color-g", help="Mask color G value"
+    ),
+    mask_color_b: int = typer.Option(
+        143, "-mb", "-mask-color-b", help="Mask color B value"
+    ),
+):
+    # load train image
+    train_image = jnp.array(
+        cv2.cvtColor(cv2.imread(train_image_path, cv2.IMREAD_COLOR), cv2.COLOR_BGR2RGB)
+    )
+    train_masked_image = jnp.array(
+        cv2.cvtColor(
+            cv2.imread(train_masked_image_path, cv2.IMREAD_COLOR), cv2.COLOR_BGR2RGB
+        )
+    )
+    test_images = []
+    test_image_names = []
+    for cur_file in os.listdir(test_image_root_path):
+        if cur_file.endswith(".jpg") and (not cur_file.startswith("train")):
+            test_images.append(
+                jnp.array(
+                    cv2.cvtColor(
+                        cv2.imread(
+                            os.path.join(test_image_root_path, cur_file),
+                            cv2.IMREAD_COLOR,
+                        ),
+                        cv2.COLOR_BGR2RGB,
+                    )
+                )
+            )
+            test_image_names.append(cur_file)
+    # run sky classification
+    results = sky_classification(
+        train_image=train_image,
+        train_masked_image=train_masked_image,
+        mask_color=jnp.array([mask_color_r, mask_color_g, mask_color_b]),
+        test_images=test_images,
+        num_cluster=num_clusters,
+        random_seed=random_seed,
+        tol=tol,
+        max_iter=max_iter,
+    )
+    # save images
+    for cur_name, cur_result in zip(test_image_names, results):
+        cv2.imwrite(
+            os.path.join(
+                image_output_path,
+                cur_name,
+            ),
+            cv2.cvtColor(np.array(cur_result).astype("uint8"), cv2.COLOR_RGB2BGR),
+        )
 
 
 if __name__ == "__main__":

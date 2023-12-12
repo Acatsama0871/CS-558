@@ -3,16 +3,18 @@ import jax.numpy as jnp
 
 
 @jax.jit
-def scatter_add(sums, src, index):
+def scatter_add(sums: jnp.ndarray, src: jnp.ndarray, index: jnp.ndarray) -> jnp.ndarray:
     return sums.at[index].add(src)
 
 
 @jax.jit
-def scatter_count(counts, index):
+def scatter_count(counts: jnp.ndarray, index: jnp.ndarray) -> jnp.ndarray:
     return counts.at[index].add(1)
 
 
-def scatter_mean_func(src, index, num_classes):
+def scatter_mean_func(
+    src: jnp.ndarray, index: jnp.ndarray, num_classes: int
+) -> jnp.ndarray:
     # Initialize arrays to store sums and counts
     sums = jnp.zeros((num_classes, src.shape[1]))
     counts = jnp.zeros(num_classes)
