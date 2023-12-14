@@ -1,116 +1,92 @@
 import os
 import cv2
+import jax
 import pickle
 import typer
-import numpy as np
 import jax.numpy as jnp
+import numpy as np
 from rich import print
-from src import harris_corner_detector, feature_similarity
+from src import harris_detector, feature_matching_func
+from PIL import Image, ImageOps
 
 
 app = typer.Typer()
 
 
-# Problem 1
-# question 1
-@app.command("harris", help="Run Harris Corner Detection")
-def harris_cli(
-    input_root_path: str = typer.Option(
-        os.path.join("data"), "-i", "--input", help="Input root path"
+@app.command("harris-corners", help="Harris Corners Detection")
+def harris_corners_cli(
+    input_image_root_path: str = typer.Option(
+        os.path.join("data"),
+        "-i",
+        "--input-image-root-path",
+        help="Input image root path",
     ),
-    output_root_path: str = typer.Option(
-        os.path.join("results", "harris_raw"), "-o", "--output", help="Output root path"
+    output_image_save_path: str = typer.Option(
+        os.path.join("results", "harris_raw"),
+        "-o",
+        "--output-image-save-path",
+        help="Output image save path",
     ),
     num_keypoints: int = typer.Option(
-        1000, "-n", "--num-keypoints", help="Number of keypoints to show"
+        1000,
+        "-n",
+        "--num-keypoints",
+        help="Number of keypoints",
     ),
-    gaussian_sigma: float = typer.Option(
-        5,
+    gaussian_filter_size: int = typer.Option(
+        3,
+        "-g",
+        "--gaussian-filter-size",
+        help="Gaussian filter size",
+    ),
+    alpha: float = typer.Option(
+        0.04,
+        "-a",
+        "--alpha",
+        help="Alpha in Harris detector",
+    ),
+    nms_size: int = typer.Option(
+        3,
         "-s",
-        "--sigma",
-        help="Sigma of Gaussian, the kernel size will be int(floor(6 * sigma + 1))",
+        "--nms-size",
+        help="Non-maximum suppression size",
     ),
-    harris_response_alpha: float = typer.Option(
-        0.05, "-a", "--alpha", help="Alpha of Harris Corner Response"
+    no_nms: bool = typer.Option(
+        False,
+        "--no-nms",
+        help="Do not apply non-maximum suppression",
     ),
-):
-    for cur_file in os.listdir(input_root_path):
-        print(f"[blue]Processing {cur_file}...[blue]")
-        cur_img = jnp.array(
-            cv2.imread(os.path.join(input_root_path, cur_file), cv2.IMREAD_GRAYSCALE)
-        )
-        plot_img = harris_corner_detector(
-            input_img=cur_img,
-            num_keypoints=num_keypoints,
-            gaussian_sigma=gaussian_sigma,
-            harris_response_alpha=harris_response_alpha,
-            return_raw_feature_map=False,
-        )
-        cv2.imwrite(
-            os.path.join(output_root_path, f"harris_raw_{cur_file.split('.')[0]}.png"),
-            np.array(plot_img),
-        )
-
-
-# question 2
-@app.command("harris_nms", help="Run Non-Maximum Suppression")
-def non_maximum_suppression_cli(
-    input_root_path: str = typer.Option(
-        os.path.join("results", "harris_raw"), "-i", "--input", help="Input root path"
-    ),
-    output_root_path: str = typer.Option(
-        os.path.join("results", "harris_nms"), "-o", "--output", help="Output root path"
-    ),
-    window_size: int = typer.Option(
-        20, "-w", "--window-size", help="Window size of non-maximum suppression"
-    ),
-    num_keypoints: int = typer.Option(
-        1000, "-n", "--num-keypoints", help="Number of keypoints to show"
-    ),
-    gaussian_sigma: float = typer.Option(
+    sigma: float = typer.Option(
         1,
-        "-s",
         "--sigma",
-        help="Sigma of Gaussian, the kernel size will be int(floor(6 * sigma + 1))",
-    ),
-    harris_response_alpha: float = typer.Option(
-        0.05, "-a", "--alpha", help="Alpha of Harris Corner Response"
+        help="Sigma in Gaussian filter",
     ),
 ):
-    for cur_file in os.listdir(input_root_path):
-        print(f"[blue]Processing {cur_file}...[blue]")
-        cur_img = cv2.imread(os.path.join(input_root_path, cur_file))
-        cur_img = cv2.GaussianBlur(cur_img, (11, 11), 0)
-        cur_img = cv2.cvtColor(cur_img, cv2.COLOR_BGR2GRAY)
-        cur_img = jnp.array(cur_img)
-        feature_img, output_img = harris_corner_detector(
-            input_img=cur_img,
+    for cur_file in os.listdir(input_image_root_path):
+        print(f"[blue]Processing {cur_file}...[/blue]")
+        cur_image = Image.open(os.path.join(input_image_root_path, cur_file))
+        cur_image = np.array(cur_image.convert("L")).astype(np.float32)
+        corner_response = harris_detector(
+            image=cur_image,
+            alpha=alpha,
             num_keypoints=num_keypoints,
-            gaussian_sigma=gaussian_sigma,
-            harris_response_alpha=harris_response_alpha,
-            nms_window_size=window_size,
-            return_raw_feature_map=True,
+            apply_non_max_suppression=not no_nms,
+            gaussian_filter_size=gaussian_filter_size,
+            non_max_suppression_size=nms_size,
+            sigma=sigma,
         )
-        cv2.imwrite(
+        pre_fix = "harris_raw" if no_nms else "harris_nms"
+        img = Image.fromarray(corner_response)
+        img.convert("L").save(
             os.path.join(
-                output_root_path,
-                f"harris_nms_{cur_file.split('.')[0].replace('harris_raw_', '')}.png",
-            ),
-            np.array(output_img.astype(jnp.uint8)),
+                output_image_save_path, f'{pre_fix}_{cur_file.split(".")[0]}.png'
+            )
         )
-        with open(
-            os.path.join(
-                output_root_path,
-                f"harris_nms_{cur_file.split('.')[0].replace('harris_raw_', '')}.pkl",
-            ),
-            "wb",
-        ) as f:
-            pickle.dump(feature_img, f)
+        print(f"[yellow]Num keypoint detected: {np.sum(corner_response > 0)}[/yellow]")
 
 
-# question 3
-@app.command("feature_match", help="Run Feature Matching")
-def feature_match_cli(
+@app.command("feature-matching", help="Feature Matching")
+def feature_matching_cli(
     image1_feature_path: str = typer.Option(
         os.path.join("results", "harris_nms", "harris_nms_uttower_left.png"),
         "-i1f",
@@ -135,46 +111,172 @@ def feature_match_cli(
         "--image2",
         help="Image 2 path",
     ),
+    result_save_path: str = typer.Option(
+        os.path.join("results"),
+        "-o",
+        "--result-save-path",
+        help="Result save path",
+    ),
     descriptor_size: int = typer.Option(
-        10, "-d", "--descriptor-size", help="Descriptor size"
+        100, "-d", "--descriptor-size", help="Descriptor size"
     ),
     similarity_measure: str = typer.Option(
-        "ncc", "-s", "--similarity", help="Similarity measure"
+        "nss", "-s", "--similarity", help="Similarity measure"
     ),
-    return_size: int = typer.Option(5, "-r", "--return-size", help="Return size"),
+    return_size: int = typer.Option(20, "-r", "--return-size", help="Return size"),
+    return_all: bool = typer.Option(
+        False,
+        "--return-all",
+        help="Return all keypoints",
+    ),
+    save_pickle: bool = typer.Option(
+        False,
+        "--save-pickle",
+        help="Save pickle file",
+    ),
 ):
-    # find matched keypoints
-    # image1_feature = jnp.array(cv2.imread(image1_feature_path, cv2.IMREAD_GRAYSCALE))
-    # image2_feature = jnp.array(cv2.imread(image2_feature_path, cv2.IMREAD_GRAYSCALE))
-    with open(
-        "/home/haohang/CS-558/hw3/results/harris_nms/harris_nms_uttower_left.pkl", "rb"
-    ) as f:
-        image1_feature = pickle.load(f)
-    with open(
-        "/home/haohang/CS-558/hw3/results/harris_nms/harris_nms_uttower_right.pkl", "rb"
-    ) as f:
-        image2_feature = pickle.load(f)
-    matched_keypoints1, matched_keypoints2 = feature_similarity.match_features(
-        image1_feature,
-        image2_feature,
+    # load image
+    img1 = cv2.imread(image1_path)
+    img2 = cv2.imread(image2_path)
+
+    # load feature
+    img1_feature = Image.open(image1_feature_path)
+    img1_feature = ImageOps.equalize(img1_feature)
+    img1_feature = np.array(img1_feature.convert("L")).astype(np.float32)
+    img2_feature = Image.open(image2_feature_path)
+    img2_feature = ImageOps.equalize(img2_feature)
+    img2_feature = np.array(img2_feature.convert("L")).astype(np.float32)
+
+    # matching
+    img1_keypoints, img2_keypoints, _ = feature_matching_func(
+        response_image_1=img1_feature,
+        response_image_2=img2_feature,
         descriptor_size=descriptor_size,
-        similarity=similarity_measure,
-        return_size=return_size,
+        similarity_measure=similarity_measure,
+        top_k=return_size,
+        return_all=return_all,
     )
 
-    # draw matched keypoints
-    image1 = cv2.imread(image1_path)
-    image2 = cv2.imread(image2_path)
-    combined_image = np.hstack((image1, image2))
+    if save_pickle:
+        with open(
+            os.path.join(
+                result_save_path,
+                f"img1_{similarity_measure}_{descriptor_size}_keypoints.pkl",
+            ),
+            "wb",
+        ) as f:
+            pickle.dump((img1_keypoints), f)
+        with open(
+            os.path.join(
+                result_save_path,
+                f"img2_{similarity_measure}_{descriptor_size}_keypoints.pkl",
+            ),
+            "wb",
+        ) as f:
+            pickle.dump((img2_keypoints), f)
+    else:
+        # plot result
+        concat_image = np.concatenate((img1, img2), axis=1)
+        for pt1, pt2 in zip(img1_keypoints, img2_keypoints):
+            cv2.circle(concat_image, (pt1[1], pt1[0]), 5, (0, 255, 0), -1)
+            cv2.circle(
+                concat_image, (pt2[1] + img1.shape[1], pt2[0]), 5, (0, 255, 0), -1
+            )
+            cv2.line(
+                concat_image,
+                (pt1[1], pt1[0]),
+                (pt2[1] + img1.shape[1], pt2[0]),
+                (0, 0, 255),
+                1,
+            )
+        cv2.imwrite(
+            os.path.join(
+                result_save_path, f"concat_{similarity_measure}_{descriptor_size}.png"
+            ),
+            concat_image,
+        )
 
-    for pt1, pt2 in zip(matched_keypoints1, matched_keypoints2):
-        pt1 = (int(pt1[1]), int(pt1[0]))  # type: ignore
-        pt2 = (int(pt2[1] + image1.shape[1]), int(pt2[0]))  # type: ignore
-        cv2.line(combined_image, pt1, pt2, (0, 255, 0), 1)
 
-    cv2.imwrite(
-        "test.png",
-        combined_image,
+@app.command("generate_correspondence", help="Generate Correspondence")
+def generate_correspondence_cli(
+    img1_correspondence_path: str = typer.Option(
+        os.path.join("results", "img1_nss_160_keypoints.pkl"),
+        "-i1c",
+        "--img1_correspondence_path",
+        help="Image 1 correspondence path",
+    ),
+    img2_correspondence_path: str = typer.Option(
+        os.path.join("results", "img2_nss_160_keypoints.pkl"),
+        "-i2c",
+        "--img2_correspondence_path",
+        help="Image 2 correspondence path",
+    ),
+    num_top_features: int = typer.Option(
+        20,
+        "-n",
+        "--num-top-features",
+        help="Number of top features",
+    ),
+    num_random_features: int = typer.Option(
+        30,
+        "-r",
+        "--num-random-features",
+        help="Number of random features",
+    ),
+    result_save_path: str = typer.Option(
+        os.path.join("results"),
+        "-o",
+        "--result-save-path",
+        help="Result save path",
+    ),
+    random_seed: int = typer.Option(
+        0,
+        "--random-seed",
+        help="Random seed",
+    ),
+):
+    with open(img1_correspondence_path, "rb") as f:
+        img1_keypoints = pickle.load(f)
+    with open(img2_correspondence_path, "rb") as f:
+        img2_keypoints = pickle.load(f)
+    # top-k
+    img1_keypoints_top_k = img1_keypoints[:num_top_features]
+    img2_keypoints_top_k = img2_keypoints[:num_top_features]
+    img1_keypoints_top_k = jnp.array(img1_keypoints_top_k).T
+    img2_keypoints_top_k = jnp.array(img2_keypoints_top_k).T
+    # random
+    key = jax.random.PRNGKey(random_seed)
+    cur_shape = 0
+    while cur_shape != num_random_features:
+        random_index = np.array(
+            jnp.unique(
+                jax.random.randint(
+                    key,
+                    (num_random_features + 1,),
+                    minval=0,
+                    maxval=len(img1_keypoints),
+                )
+            )
+        )
+        cur_shape = random_index.shape[0]
+    img1_keypoints_random = jnp.array(img1_keypoints).at[random_index].get()  # type: ignore
+    img2_keypoints_random = jnp.array(img2_keypoints).at[random_index].get()  # type: ignore
+    print(f"[yellow]Top-k keypoints: {img1_keypoints_top_k.shape}[/yellow]")
+    print(f"[yellow]Random keypoints: {img1_keypoints_random.shape}[/yellow]")
+    # save results
+    jnp.save(
+        os.path.join(result_save_path, "img1_keypoints_top_k.npy"), img1_keypoints_top_k
+    )
+    jnp.save(
+        os.path.join(result_save_path, "img2_keypoints_top_k.npy"), img2_keypoints_top_k
+    )
+    jnp.save(
+        os.path.join(result_save_path, "img1_keypoints_random.npy"),
+        img1_keypoints_random,
+    )
+    jnp.save(
+        os.path.join(result_save_path, "img2_keypoints_random.npy"),
+        img2_keypoints_random,
     )
 
 

@@ -1,2 +1,1 @@
-from .feature_detection import harris_corner_detector
-from .feature_similarity import match_features
+from .feature_matching import harris_detector, feature_matching_func
