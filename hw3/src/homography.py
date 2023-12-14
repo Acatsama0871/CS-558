@@ -42,7 +42,6 @@ def ransac_homography(
     img2_keypoints: jnp.ndarray,
     dist_threshold: float,
     max_iter: int,
-    stop_threshold: int,
     sample_per_iter: int,
     random_seed: int = 0,
 ) -> Tuple[jnp.ndarray, jnp.ndarray]:
@@ -52,16 +51,18 @@ def ransac_homography(
     for _ in tqdm(range(max_iter)):
         # sample points
         cur_key, key = jax.random.split(key)
+        # while True:
         sample_index = jnp.array(
             jnp.unique(
                 jax.random.randint(
                     cur_key,
-                    (sample_per_iter,),
+                    (sample_per_iter + 3,),
                     minval=0,
-                    maxval=len(img1_keypoints),
+                    maxval=img1_keypoints.shape[1],
                 )
             )
         )
+        sample_index = sample_index[:sample_per_iter]
         cur_image1_keypoints = img1_keypoints.at[:, sample_index].get()
         cur_image2_keypoints = img2_keypoints.at[:, sample_index].get()
         matrix_a = construct_matrix(cur_image1_keypoints).reshape(-1, 6)
@@ -71,15 +72,16 @@ def ransac_homography(
             cur_homography_matrix, img1_keypoints, img2_keypoints
         )
         # stop condition
-        if jnp.sum(cur_dist < dist_threshold) > stop_threshold:
+        if cur_dist < dist_threshold:
             break
 
     # calculate inliers
     index_set = set(range(img1_keypoints.shape[1]))
     inlier_index = set(np.array(sample_index).tolist())  # type: ignore
     outlier_index = index_set - inlier_index
+    outlier_index = np.array(list(outlier_index))
     inlier_keypoints1 = img1_keypoints.at[:, sample_index].get()[:, :, jnp.newaxis]  # type: ignore
-    outlier_keypoints1 = img1_keypoints.at[:, jnp.array((outlier_index))].get()[:, jnp.newaxis, :]  # type: ignore
+    outlier_keypoints1 = img1_keypoints.at[:, outlier_index].get()[:, jnp.newaxis, :]  # type: ignore
     distance_matrix = jnp.linalg.norm(inlier_keypoints1 - outlier_keypoints1, axis=0)
     inlier_mask = distance_matrix <= dist_threshold
     outlier_index = jnp.unique(

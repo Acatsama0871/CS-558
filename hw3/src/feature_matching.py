@@ -262,4 +262,5 @@ def feature_matching_func(
             return_keypoints1.append(matched_keypoints1[i])
             return_keypoints2.append(matched_keypoints2[i])
             return_scores.append(matched_scores[i])
+
     return return_keypoints1, return_keypoints2, return_scores

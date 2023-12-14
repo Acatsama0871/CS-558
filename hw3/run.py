@@ -6,7 +6,7 @@ import typer
 import jax.numpy as jnp
 import numpy as np
 from rich import print
-from src import harris_detector, feature_matching_func
+from src import harris_detector, feature_matching_func, ransac_homography
 from PIL import Image, ImageOps
 
 
@@ -278,6 +278,86 @@ def generate_correspondence_cli(
         os.path.join(result_save_path, "img2_keypoints_random.npy"),
         img2_keypoints_random,
     )
+
+
+@app.command("ransac", help="RANSAC")
+def ransac_cli(
+    img1_path: str = typer.Option(
+        os.path.join("data", "uttower_left.jpg"),
+        "-i1",
+        "--img1_path",
+        help="Image 1 path",
+    ),
+    img2_path: str = typer.Option(
+        os.path.join("data", "uttower_right.jpg"),
+        "-i2",
+        "--img2_path",
+        help="Image 2 path",
+    ),
+    img1_correspondence_path: str = typer.Option(
+        os.path.join("results", "img1_keypoints_top_k.npy"),
+        "-i1c",
+        "--img1_correspondence_path",
+        help="Image 1 correspondence path",
+    ),
+    img2_correspondence_path: str = typer.Option(
+        os.path.join("results", "img2_keypoints_top_k.npy"),
+        "-i2c",
+        "--img2_correspondence_path",
+        help="Image 2 correspondence path",
+    ),
+    result_save_path: str = typer.Option(
+        os.path.join("results", "ransac_top_k.png"),
+        "-o",
+        "--result-save-path",
+        help="Result save path",
+    ),
+    dist_threshold: float = typer.Option(
+        60,
+        "-d",
+        "--dist-threshold",
+        help="Distance threshold",
+    ),
+    max_iter: int = typer.Option(
+        1000,
+        "-m",
+        "--max-iter",
+        help="Maximum iteration",
+    ),
+    sample_per_iter: int = typer.Option(
+        7,
+        "-p",
+        "--sample-per-iter",
+        help="Sample per iteration",
+    ),
+    random_seed: int = typer.Option(
+        4,
+        "--random-seed",
+        help="Random seed",
+    ),
+):
+    img1_keypoints = jnp.load(img1_correspondence_path)
+    img2_keypoints = jnp.load(img2_correspondence_path)
+    # ransac
+    homography_matrix, inliers = ransac_homography(
+        img1_keypoints=img1_keypoints,
+        img2_keypoints=img2_keypoints,
+        dist_threshold=dist_threshold,
+        max_iter=max_iter,
+        sample_per_iter=sample_per_iter,
+        random_seed=random_seed,
+    )
+
+
+    # stitching
+    image1 = cv2.imread(img1_path)
+    image2 = cv2.imread(img2_path)
+    # Warp the first image
+    transformed_image = cv2.warpAffine(
+        image1, np.array(homography_matrix), (image1.shape[1], image1.shape[0])
+    )
+    result_image = cv2.addWeighted(transformed_image, 0.5, image2, 0.5, 0)
+    cv2.imwrite(result_save_path, result_image)
 
 
 if __name__ == "__main__":
