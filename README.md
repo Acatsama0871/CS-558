@@ -1,1 +1,1 @@
-# CS-558
+# Stevens CS-558: Computer Vision
